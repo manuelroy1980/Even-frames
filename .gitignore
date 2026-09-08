@@ -1,0 +1,13 @@
+# run history and scratch — yours, not everyone's
+cadence-log.tsv
+launch-log.txt
+__pycache__/
+*.pyc
+
+# video files should never end up in the repo
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*_REPORT.txt

@@ -1,0 +1,480 @@
+========================================================
+  EVEN FRAMES  -  START HERE
+========================================================
+
+Repairs the once-a-second stutter in AI-generated video.
+Windows. Free. You do not need to know how to code.
+
+
+THE ICONS
+
+  0-SETUP-CHECK.bat      is Python and ffmpeg installed
+  1-FIX-VIDEO.bat        fix a clip  <-- this is the one
+  2-DIAGNOSE-ONLY.bat    just tell me what is wrong
+  4-CHECK-TIMING.bat     does the repair still fit the audio
+  5-SELF-TEST.bat        checks the tools themselves still work
+
+There used to be four repair icons and you had to pick the
+right one. That is gone. There is one repair icon now and it
+works out which repair your clip needs by itself - and it
+says which, and why, before it does anything.
+
+Icon 5 is not for your videos. It checks the TOOLS. Run it
+after anything in here changes: it takes one of your clean
+clips, breaks a copy four ways it knows the answer to, and
+confirms the repairs still work. All PASS means nothing that
+used to work got broken.
+
+
+========================================================
+  START HERE  -  fixing the stutter in your AI videos
+========================================================
+
+WHAT THIS IS
+
+Your AI videos hiccup every second or so. There are three
+different faults that all look like the same hiccup:
+
+  HELD FRAMES     every 4th picture is a copy of the one
+                  before it. The real one was thrown away.
+
+  MISSING FRAMES  a few pictures are simply gone. Nothing is
+                  repeated - there is just a lurch where a
+                  moment used to be.
+
+  DROPPED THROUGH-  the clip was made at 25 or 30 pictures a
+  OUT               second and squeezed into 24 by throwing
+                    frames away all the way along.
+
+They need three different repairs, and doing the wrong one
+makes the clip worse. Drag your file onto 1-FIX-VIDEO and it
+sorts that out for you.
+
+You do NOT need to learn to code. You drag a video file onto
+an icon and wait.
+
+
+WHAT YOU GET BACK
+
+A file called <yourname>_even.mp4 next to the original, and
+a small text file saying what was done to it.
+
+It is always 24 fps, always the same number of frames, and
+always exactly as long as the original. So it drops straight
+on your timeline and the audio still fits. Nothing to retime,
+nothing to conform, no speed percentage to type in.
+
+If your clip cannot be fixed under that rule, the tool tells
+you and leaves the file alone. That is on purpose - better
+than handing you something that looks fixed and is not.
+
+
+ALWAYS USE THE RAW DOWNLOAD
+
+Not a Topaz file. Not a file you already ran this on. The
+repair works by reading the original damage to figure out
+what happened, and an earlier pass has already erased it.
+The tool will refuse if it spots this, but start clean.
+
+
+IF IT SAYS "NO BETTER"
+
+At the end of every repair it measures its own work and
+compares it to the original. If it says
+
+    ** NO BETTER - do not use this file **
+
+then believe it, keep the original, and open an issue on GitHub. That
+line existing at all is the point: the tool is not allowed
+to tell you it succeeded without checking.
+
+
+CHECKING AGAINST DIALOGUE
+
+Icon 4 compares a repaired clip against its original and
+tells you whether the picture still sits where it did. You
+want to see:
+
+    largest lag: -1 frames = -0.042 s
+    IN STEP - the picture sits where it did.
+
+It should always say that now, because the repair cannot
+change the length. If it ever says DRIFTS, do not use the
+file - please open an issue on GitHub.
+
+
+--------------------------------------------------------
+PART 1 - ONE-TIME SETUP (about 5 minutes, only ever once)
+--------------------------------------------------------
+
+Your computer needs two free programs. They are not apps with
+windows - they are helpers that run behind the scenes.
+
+  Python   - runs the little repair programs
+  ffmpeg   - reads and writes video files
+
+
+STEP 1.  Open the black command window.
+
+  Press the Windows key.
+  Type:  cmd
+  Press Enter.
+
+  A black window opens with white text. Don't be scared of it.
+  You type a line, press Enter, it does the thing.
+
+
+STEP 2.  Install ffmpeg.
+
+  Click in the black window, type this exactly, press Enter:
+
+      winget install Gyan.FFmpeg
+
+  It will churn for a minute or two and print a lot of text.
+  If it asks you to agree to terms, type  Y  and press Enter.
+
+
+STEP 3.  Install Python.
+
+  In the same black window, type this, press Enter:
+
+      winget install Python.Python.3.12
+
+  Wait for it to finish.
+
+
+STEP 4.  Close the black window completely and open a new one.
+
+  This matters. The new programs only appear to windows that
+  are opened AFTER they were installed.
+
+
+STEP 5.  Check it worked.
+
+  Go to the folder you unzipped.
+  Double-click:  0-SETUP-CHECK.bat
+
+  You want to see "Python OK" and "ffmpeg OK".
+  If either says MISSING, go back to step 2.
+
+  (If Windows shows a blue "Windows protected your PC" box,
+   click "More info", then "Run anyway". That box appears for
+   any file Microsoft hasn't seen before. Every file in this
+   folder is plain text you can read yourself.)
+
+Setup is done forever. You never do Part 1 again.
+
+
+--------------------------------------------------------
+PART 2 - FIXING A VIDEO
+--------------------------------------------------------
+
+There are two ways, and both work. Use whichever feels easier.
+
+  YOU CAN DO SEVERAL FILES AT ONCE. Select them all (click the
+  first, hold Shift, click the last) and drag the whole lot in.
+  Each one is handled in turn and you get a running count. For
+  a big batch, dragging into the window is more reliable than
+  dragging onto the icon.
+
+  WAY 1 - double-click the icon
+      Double-click  1-FIX-VIDEO.bat
+      A black window opens and asks for a file.
+      NOW drag your video into that black window and let go -
+      a long file path appears as text.
+      Press Enter.
+
+  WAY 2 - drag onto the icon
+      Don't open anything. Just drag your video file on top of
+      the 1-FIX-VIDEO.bat icon in the folder and let go.
+
+The window thinks for a bit, then prints four sections.
+
+
+  DIAGNOSIS
+
+      What it found, and the evidence. For example:
+
+        DIAGNOSIS: PAD
+          frames 0-167: PAD - every 4th frame is a repeat,
+          33 of them, beat 89% solid
+          evidence: PAD 0.94, PULLDOWN 0.56, SEAM 0.00
+
+      Those last numbers are how well each explanation fits.
+      The winner has to beat the runner-up by a clear margin.
+      If two are close it says AMBIGUOUS and stops, rather
+      than guessing - guessing is how you end up with the
+      wrong repair applied to a good clip.
+
+      It also tells you about hard cuts inside the clip and
+      about held passages, and it will not touch either.
+
+
+  PLAN
+
+      Which stretches of the clip it is going to even out, and
+      how many pictures it has to repaint. A clip where only
+      one stretch is damaged only gets that stretch touched -
+      the rest is copied across untouched, so it does not lose
+      any quality it did not have to.
+
+
+  (it works)
+
+
+  CHECK
+
+      This is the part to read. When it has finished, it
+      measures the file it just wrote and diagnoses it again
+      from scratch:
+
+        frames 97 -> 97, 4.042s -> 4.042s, 24 fps -> 24 fps  OK
+        unevenness 1.04 -> 0.08   worst hitch 2.35x -> 1.26x
+        re-diagnosed as: CLEAN   (the defect is gone)
+        overall 1.24 -> 0.12   evened out
+
+      A clean clip reads about 0.05 and 1.2x, so that one came
+      back as good as new.
+
+      If it says
+
+        ** NO BETTER - do not use this file **
+
+      then believe it. Keep your original and open an issue on GitHub.
+
+
+You get a new file named
+    yourvideo_even.mp4
+
+and a short note beside it saying what was done. Your original
+is never touched.
+
+
+WHY THE LENGTH NEVER CHANGES
+
+Think of the video as 24 numbered pigeonholes per second. The
+repair never adds or removes a pigeonhole - it only changes what
+is sitting in each one, so that the motion advances by the same
+amount every time.
+
+That is why there is no retime step any more, and no _RETIME.txt
+file. The old tools sometimes had to make a clip 5% longer and
+hand you a speed percentage to type into Resolve. This one is not
+allowed to do that. If a clip could only be fixed by making it
+longer, it tells you and leaves it alone.
+
+
+--------------------------------------------------------
+PART 3 - JUST TELLING ME WHAT IS WRONG
+--------------------------------------------------------
+
+      2-DIAGNOSE-ONLY.bat
+
+Exactly the same diagnosis and the same plan, but it writes
+nothing at all. Use it when you want to know before committing,
+or when a repair came out wrong and you want to see what the
+tool thought it was looking at.
+
+It is the same engine, not a second opinion. That matters: the
+old check icon and the old fix icon had separate detectors and
+could genuinely disagree about the same clip.
+
+
+--------------------------------------------------------
+PART 4 - WHEN IT MENTIONS TOPAZ
+--------------------------------------------------------
+
+The repair invents missing pictures by chopping the frame into
+squares and working out where each square moved. That works well
+for solid things - a face, a wall, a body.
+
+It struggles with thin things moving fast: strands of hair, grass,
+rain, fabric weave. There is no single obvious answer for where a
+hair strand went, so it splits the difference and you can get a
+smear. (Tighter settings were tested. No better, much slower.)
+
+Every run tests both ways of inventing a frame on YOUR clip and
+prints the score:
+
+    invented-frame test on this clip: optical flow keeps 86% of
+    detail in its worst areas, blend 71%
+
+It picks the better one automatically. Only if BOTH come out under
+55% does it mention Topaz, because that is the only case where the
+trip is worth it:
+
+  1. Open Topaz Video AI, load the RAW download.
+  2. Choose Frame Interpolation, model Apollo (apo-8).
+  3. Tick "Replace duplicate frames".
+  4. Keep the output at 24 fps.
+  5. Export, then upscale afterwards on that result.
+
+The free result is still written either way, as the fallback.
+
+
+--------------------------------------------------------
+PART 5 - WHY THERE IS ONLY ONE REPAIR BUTTON
+--------------------------------------------------------
+
+An earlier version of this had one icon for held frames, one for
+missing frames, one for making an 18 fps file, and one that tried
+to do both. You had to pick. Picking wrong made the clip worse,
+and several of them disagreed with each other about what was even
+wrong in the first place.
+
+1-FIX-VIDEO replaces all of them. It diagnoses first, tells you
+what it found and why, then applies the one repair that fits.
+
+
+--------------------------------------------------------
+IF SOMETHING GOES WRONG
+--------------------------------------------------------
+
+The window closed the instant I dragged my video in
+      That was the old version of these icons - they closed as
+      soon as any key was pressed, and dragging a file counts as
+      pressing keys. They have been rebuilt. The window now waits
+      for the file properly, and stays open at the end no matter
+      what happens.
+
+The window flashes open and shuts instantly, before you touch it
+      Python isn't installed, or step 4 was skipped. Redo Part 1.
+
+"python is not recognized"
+      Same thing. Close every black window, open a fresh one.
+
+It says "Nothing to repair" and does nothing
+      That's not an error, and there is no other tool to try.
+      It means the motion in that clip is already even. The
+      DIAGNOSIS section above it says what it measured.
+
+It says AMBIGUOUS and stops
+      Two explanations fit the clip about equally well and it
+      will not guess between them. Open a GitHub issue with the
+      DIAGNOSIS block; the evidence scores say what it was
+      torn between.
+
+It says NOT ENOUGH ROOM
+      Frame extraction needs a few hundred MB for 1080p and a
+      few GB for 4K. Point it at a roomier drive: open a black
+      window, type   set CADENCE_TMP=D:\cadence_scratch
+      then start the icon from that same window.
+
+It's taking forever
+      You gave it a 4K or 8K file. Use the raw download.
+
+Something else
+      Open an issue on GitHub with a screenshot of the black
+      window and the name of the tool you used.
+
+
+--------------------------------------------------------
+WHAT EACH FILE IN THIS FOLDER IS
+--------------------------------------------------------
+
+  START-HERE.txt              this page
+  0-SETUP-CHECK.bat           tells you if setup worked
+  1-FIX-VIDEO.bat             drag a video on - fixes it
+  2-DIAGNOSE-ONLY.bat         drag a video on - what's wrong?
+  4-CHECK-TIMING.bat          does a repair still fit the audio
+  5-SELF-TEST.bat             checks the tools themselves still work
+
+  cadence-log.tsv             one line per clip the tools have seen
+                              (created on first run)
+
+  README.md                   what this is, and how to install
+  docs/HOW-IT-WORKS.md        how it works, and the proof
+  docs/WHY-IT-HAPPENS.md      why the damage exists at all
+  docs/BUILD-HISTORY.md       the build log, kept for reference
+
+  cadence_core.py             the engine - measures and decides
+  cadence_fix.py              the code behind icon 1
+  cadence_check.py            the code behind icon 2
+  run_tool.py                 handles your dragged-in file list
+  timing_check.py             the code behind icon 4
+  cadence_selftest.py         the code behind icon 5
+
+You can ignore everything from cadence_core.py down unless
+you're curious.
+
+
+--------------------------------------------------------
+APPENDIX - RETIMING A CLIP IN DAVINCI RESOLVE
+--------------------------------------------------------
+
+These tools no longer ask you to retime anything - the repair
+cannot change a clip's length, so there is never a percentage to
+type in. This section is kept because it is still the right way to
+retime any OTHER clip in Resolve, and because the quality settings
+at the bottom are worth having set correctly anyway.
+
+SET THE SPEED
+
+  In the Edit page, put the clip on the timeline.
+  Right-click the clip -> Change Clip Speed...
+  A small box opens.
+
+  Type the percentage from the RETIME file into "Speed".
+  Or, easier and exact: type the frame count from the RETIME
+  file into "Frames" (or the time into "Duration").
+  Resolve works the percentage out for you.
+
+  Leave "Ripple Sequence" UNTICKED if other clips are already
+  cut around it, or everything downstream will shift.
+
+  Press Change.
+
+  Alternative for dragging by hand: select the clip and press
+  Ctrl+R (Cmd+R on Mac) for Retime Controls. A bar appears on
+  the clip; drag its right edge. The speed shows as you drag.
+  Press Ctrl+R again to hide it.
+
+
+SET THE QUALITY - THIS IS THE PART THAT MATTERS
+
+  A speed change makes Resolve invent pictures, exactly like our
+  tool does. By default it uses the cheapest method and it looks
+  awful. Change it:
+
+  Right-click the clip -> Retime Process -> Optical Flow
+
+  There are three choices there:
+     Nearest      - repeats pictures. Judders. Never use for this.
+     Frame Blend  - cross-fades pictures. Ghosting. Avoid.
+     Optical Flow - works out the motion and paints new pictures.
+
+  For faces and fast action, go one better. With the clip
+  selected, open the Inspector (top right), go to the Video tab,
+  and find "Retime and Scaling":
+
+     Retime Process     -> Optical Flow
+     Motion Estimation  -> Speed Warp
+
+  Speed Warp is the best one. It needs Resolve Studio (the paid
+  version); on the free version, choose "Enhanced Better"
+  instead - still good.
+
+
+DO IT FOR EVERY CLIP, AUTOMATICALLY
+
+  So you never forget:
+  File -> Project Settings -> Master Settings -> Frame
+  Interpolation
+     Retime Process     -> Optical Flow
+     Motion Estimation  -> Speed Warp (or Enhanced Better)
+
+  That becomes the default for every new clip in the project.
+  Clips already on the timeline keep whatever they had, so set
+  those individually.
+
+
+IF A FILE HAS AN ODD FRAME RATE
+
+  Some outputs are tagged at a rate like 25.19 fps. Resolve needs
+  telling before you use it:
+
+  In the Media Pool, right-click the clip -> Clip Attributes...
+  -> Video tab -> Frame Rate.
+  Set it to the rate you want it interpreted at, click OK.
+
+  Do this BEFORE putting it on the timeline.
