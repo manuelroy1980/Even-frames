@@ -49,6 +49,8 @@ Classes, and the repair each one earns:
                                                             window around each
     PULLDOWN    frames dropped throughout on a repeating    even out the whole
                 cycle (a 25 or 30 fps clip forced to 24)    region
+    GRID        no frame repeated anywhere, but the steps   redistribute the
+                alternate long/short on a strict beat       whole region
     IRREGULAR   big steps, but they are bursts of fast      do nothing
                 motion, not a defect
     AMBIGUOUS   two explanations fit about equally well     do nothing, say so
@@ -71,7 +73,41 @@ except Exception:
 W, H = 192, 108
 BW = 12                     # block size for the "busiest block" measure
 
-VERSION = "3.0"
+VERSION = "3.1"
+
+
+# --------------------------------------------------------------------------
+# repair filenames - nothing already on disk is ever written over
+# --------------------------------------------------------------------------
+def even_versions(src):
+    """Every repair sitting beside src, oldest first. Empty if there are none.
+
+    The first repair of a file is <name>_even.mp4; the second is
+    <name>_even_2.mp4, and so on. Older ones are kept so a new repair can
+    always be compared against the one it replaced.
+    """
+    stem, ext = os.path.splitext(src)
+    out = []
+    first = f"{stem}_even{ext}"
+    if os.path.exists(first):
+        out.append(first)
+    i = 2
+    while os.path.exists(f"{stem}_even_{i}{ext}"):
+        out.append(f"{stem}_even_{i}{ext}")
+        i += 1
+    return out
+
+
+def free_even_output(src):
+    """The filename the next repair should use. Never one that already exists."""
+    stem, ext = os.path.splitext(src)
+    if not os.path.exists(f"{stem}_even{ext}"):
+        return f"{stem}_even{ext}"
+    i = 2
+    while os.path.exists(f"{stem}_even_{i}{ext}"):
+        i += 1
+    return f"{stem}_even_{i}{ext}"
+
 
 
 # --------------------------------------------------------------- ffmpeg glue
@@ -561,6 +597,43 @@ SPIKE_FLOOR = 1.40          # above anything a clean clip produces
 SEAM_STRENGTH = 1.50        # a step this size has a frame missing out of it
 
 
+DOUBLED = 1.25              # a step this much bigger than its neighbours is carrying two frames
+
+
+def _pad_phase(a, members, lo, hi, reach=3):
+    """How far after each repeat the doubled step actually sits.
+
+    Returns 1 - the ordinary geometry - unless some other offset reads as
+    doubled across the whole region while pd+1 does not. Measured over every
+    repeat at once, because the generator's phase is a property of the shot and
+    holds for all of them.
+
+    Two real clips, both PAD period 4, measured as the median of
+    step / local-neighbour-size at each offset:
+
+        pd+1   pd+2   pd+3
+        1.52   0.82   0.79     the copy sits where the moment was  -> phase 1
+        0.72   1.60   0.83     an ordinary frame sits between them -> phase 2
+
+    The separation is wide and it is consistent, so this needs no tuning knob.
+    """
+    scored = {}
+    for off in range(1, reach + 1):
+        rr = [a.cstep[pd + off] / max(_near_base(a, pd + off, lo, hi), 1e-9)
+              for pd in members
+              if lo <= pd + off <= hi and not a.dup[pd + off] and not a.flash[pd + off]]
+        if len(rr) >= max(3, len(members) // 2):
+            scored[off] = statistics.median(rr)
+    if not scored:
+        return 1
+    if scored.get(1, 0.0) >= DOUBLED:
+        return 1                    # pd+1 pays for the repeat: the usual case
+    best = max(scored, key=lambda o: scored[o])
+    if scored[best] < DOUBLED:
+        return 1                    # nothing here reads as doubled; keep the default
+    return best
+
+
 def _pad_doubles(a, members, period, lo, hi):
     """Pair every padded repeat with the moment it replaced.
 
@@ -589,15 +662,31 @@ def _pad_doubles(a, members, period, lo, hi):
     pairs, taken = {}, set()
     order = sorted(members)
 
-    # The partner is almost always the very next step, and that is geometry, not
-    # a guess. The padded frame is a copy of the one before it, so the step INTO
-    # it carries no motion and the step OUT of it has to carry two frames' worth:
-    # the moment the copy replaced, and the moment that follows. Take that first
-    # and only go hunting when it is unavailable. Ranking a window by size
-    # instead used to pick the wrong partner on a shot that speeds up, where a
-    # later ordinary step can be larger than an earlier doubled one.
+    # The partner is USUALLY the very next step, and that much is geometry: the
+    # padded frame is a copy of the one before it, so the step INTO it carries no
+    # motion and the step OUT of it has to carry two frames' worth - the moment
+    # the copy replaced, and the moment that follows.
+    #
+    # It is not always the next step, though, and taking it on faith is a real
+    # bug rather than a tidy simplification. Some generators leave an ordinary
+    # frame between the copy and the doubled step, so pd+1 is a perfectly
+    # healthy step and the hitch that has to be paid for sits at pd+2. Pairing
+    # to pd+1 there hands the restored moment to a step that never lost
+    # anything: the repair splits a healthy pair, the freeze comes out of the
+    # clip and the lurch stays in. Frame count, rate and duration all come back
+    # perfect, the engine stops naming the defect, and the clip still stutters -
+    # which is the worst shape a failure can take, because everything says it
+    # worked.
+    #
+    # So measure the offset instead of assuming it. The phase belongs to the
+    # generator, not to any one repeat, so it is decided once for the whole
+    # region from all the repeats together - one repeat's neighbourhood is noisy,
+    # forty of them are not - and then applied to every repeat in it. Ranking a
+    # window by raw size per repeat was tried and is worse: on a shot that speeds
+    # up, a later ordinary step can outweigh an earlier doubled one.
+    phase = _pad_phase(a, order, lo, hi)
     for pd in order:
-        nxt = pd + 1
+        nxt = pd + phase
         if lo <= nxt <= hi and not a.dup[nxt] and not a.flash[nxt] and nxt not in taken:
             pairs[pd] = nxt; taken.add(nxt)
     for width in (period, 2 * period):          # then wider, for any leftovers
@@ -671,6 +760,81 @@ def _spikes(a, lo, hi):
     return out
 
 
+SERIES_FLOOR = 1.15     # a lower bar, allowed ONLY where an established beat predicts a spike
+SERIES_MIN_PERIOD = 8   # a real "once a second" beat, not the dense cycle of a pulldown
+
+
+def _extend_series(a, out, lo, hi):
+    """Fill in members of an evenly spaced run of spikes that fell just short.
+
+    A generator that drops a frame does it on a beat - once a second, say - so the
+    spikes come out evenly spaced. How BIG each one measures depends on how fast
+    the picture happens to be moving at that moment, so on a slower passage one
+    beat lands under the threshold and is missed while its neighbours are found.
+    The clip then comes back with one skip still in it, in a stretch the tool
+    reported as repaired, which is the worst way to be wrong.
+
+    Measured on a real clip: spikes at 47, 71 and 95, beat of 24, and the fourth
+    member at 23 reading 1.29 against a floor of 1.40. Missed by 0.11, and plainly
+    visible to the person watching it.
+
+    So where a beat is ESTABLISHED - three or more spikes, evenly spaced, spaced
+    widely enough not to be a pulldown's cycle - the bar comes down at the
+    positions that beat predicts, and nowhere else. The evidence for those frames
+    is not their own size; it is the series they belong to.
+    """
+    strong = sorted(s["i"] for s in out if s.get("spike"))
+    if len(strong) < 3:
+        return out
+    diffs = [b - c for c, b in zip(strong, strong[1:])]
+    if not diffs:
+        return out
+    P = statistics.median(diffs)
+    if P < SERIES_MIN_PERIOD:
+        return out
+    if any(d < 1 or abs(d / P - round(d / P)) > 0.12 for d in diffs):
+        return out
+    P = int(round(P))
+
+    predicted = []
+    x = strong[0] - P
+    while x >= lo:
+        predicted.append(x); x -= P
+    x = strong[-1] + P
+    while x <= hi:
+        predicted.append(x); x += P
+    for c, b in zip(strong, strong[1:]):          # and any beat skipped in the middle
+        for m in range(1, int(round((b - c) / P))):
+            predicted.append(c + m * P)
+
+    have = {s["i"] for s in out}
+    added = 0
+    for i0 in sorted(set(predicted)):
+        best = None
+        for i in (i0, i0 - 1, i0 + 1):            # the beat can drift by a frame
+            if not (lo <= i <= hi) or i in have:
+                continue
+            if a.dup[i] or a.flash[i] or i in a.cuts:
+                continue
+            base = _near_base(a, i, lo, hi)
+            if base <= 0:
+                continue
+            r = a.cstep[i] / base
+            if r >= SERIES_FLOOR and (best is None or r > best[1]):
+                best = (i, r, base)
+        if best:
+            i, r, base = best
+            left = a.cstep[i - 1] / base if i - 1 >= lo else 1.0
+            right = a.cstep[i + 1] / base if i + 1 <= hi else 1.0
+            out.append(dict(i=i, ratio=r, left=left, right=right, spike=True,
+                            from_series=True))
+            have.add(i)
+            added += 1
+    if added:
+        out.sort(key=lambda s: s["i"])
+    return out
+
+
 def _cycle_fit(idx, span):
     """Does this set of positions repeat on a fixed cycle?
 
@@ -695,6 +859,125 @@ def _cycle_fit(idx, span):
 STANDARD_RATES = (25.0, 30.0, 30000 / 1001, 48.0, 50.0, 60.0)
 
 
+# --------------------------------------------------------- the periodic grid
+#
+# Added in 3.1. This was the largest untouched class in the library - roughly
+# sixty clips in four hundred - and every version before this one called them
+# CLEAN.
+#
+# The fault has no repeated frame anywhere, so nothing trips the repeat
+# detector, and no step is doubled, so nothing trips the spike detector. What is
+# there instead is an alternation: long step, short step, long step, across the
+# whole frame, in strict phase, usually by 6 to 18%. It is what you get when a
+# render at one rate is resampled onto another by an encoder that blends rather
+# than drops, or when a generator's internal clock never matched its output.
+# Small, and utterly regular, which is exactly what the eye reads as stutter.
+#
+# The test is a one-way ANOVA on the step sizes grouped by index modulo m. Real
+# motion has no opinion about whether a frame's index is even or odd; a
+# resampled clip has a very strong one. The F-statistic is the right tool
+# because it asks the honest question - is the difference between the phases
+# bigger than the noise inside them - and because it penalises the extra groups
+# of a larger m on its own, so a 2-frame beat is not mistaken for a 4-frame one.
+
+GRID_FLOOR = 0.08       # phases disagreeing by less than this are not worth repainting
+GRID_F = 12.0           # between-phase variance this many times the within-phase noise
+GRID_MIN = 24           # steps needed before the statistic means anything
+
+
+def _grid_evidence(a, lo, hi):
+    """Are the steps locked to a beat that is not the frame grid?
+
+    Returns the best-fitting modulus with the size of the disagreement (as a
+    fraction of the average step) and the F-statistic behind it.
+
+    Repeats, flashes and cuts are left out of the groups but keep their place in
+    the index, so the phase is never silently shifted by a frame.
+    """
+    blank = dict(m=None, amp=0.0, F=0.0, means=[], n=0)
+    norm = {}
+    for i in range(lo, hi + 1):
+        if a.dup[i] or a.flash[i] or i in a.cuts:
+            continue
+        base = _local_median(a.step, i, 4, skip=a.dup)
+        if base and base > 0:
+            norm[i] = a.step[i] / base
+    if len(norm) < GRID_MIN:
+        return blank
+    grand = statistics.fmean(norm.values())
+    if grand <= 0:
+        return blank
+    best = blank
+    for m in (2, 3, 4):
+        groups = [[] for _ in range(m)]
+        for i, v in norm.items():
+            groups[(i - lo) % m].append(v)
+        if min(len(g) for g in groups) < 6:
+            continue
+        means = [statistics.fmean(g) for g in groups]
+        amp = (max(means) - min(means)) / grand
+        between = sum(len(g) * (mu - grand) ** 2
+                      for g, mu in zip(groups, means)) / (m - 1)
+        within_ss = sum((v - mu) ** 2 for g, mu in zip(groups, means) for v in g)
+        dfw = len(norm) - m
+        within = within_ss / dfw if dfw > 0 else 0.0
+        F = between / within if within > 1e-12 else 0.0
+        if F > best["F"]:
+            best = dict(m=m, amp=round(amp, 4), F=round(F, 2),
+                        means=[round(x, 3) for x in means], n=len(norm))
+    return best
+
+
+def _grid_advance(a, lo, hi, m):
+    """How far motion time really advances at each step of a GRID region.
+
+    One number per step, scaled so the average over the region is exactly 1.0.
+    That scaling is not cosmetic: it is what guarantees the region holds the
+    same amount of motion time as it holds frames, so the repair can only ever
+    redistribute the existing frames and can never change the length of the
+    clip. The individual values are clamped as well - a step that reads three
+    times its neighbours is a piece of fast motion, not a grid fault, and
+    stretching the clip around it would be worse than the stutter.
+
+    The value used is the phase mean rather than the step itself. The phase is
+    the part that repeats and is therefore the part that is a defect; the rest
+    of the variation is the motion in the shot, which is meant to be there.
+    """
+    vals, idx = {}, []
+    for i in range(lo, hi + 1):
+        base = _local_median(a.step, i, 4, skip=a.dup)
+        if a.dup[i] or a.flash[i] or i in a.cuts or not base or base <= 0:
+            continue
+        vals[i] = a.step[i] / base
+        idx.append(i)
+    if not idx:
+        return {}
+    groups = [[] for _ in range(m)]
+    for i in idx:
+        groups[(i - lo) % m].append(vals[i])
+    means = [statistics.fmean(g) if g else 1.0 for g in groups]
+
+    # Normalise the PHASE MEANS, not the whole series.
+    #
+    # This is not a rounding detail, it is the difference between the repair
+    # working and not working. Scaling every step so the region's total comes to
+    # 1.0 per frame leaves each COMPLETE CYCLE short by a fraction, because the
+    # region rarely holds a whole number of cycles and the phases are of unequal
+    # length. A fifteen-hundredth of a frame per cycle is nothing; eighty cycles
+    # of it is an eighth of a frame, which is larger than the fault being
+    # repaired. The correction then starts out right, drifts through the clip,
+    # and is repairing the wrong frames by the end of it - measured on a test
+    # clip, that halved the fault instead of removing it.
+    #
+    # Making the phase means average exactly 1.0 makes every cycle advance
+    # exactly m, so there is nothing to accumulate.
+    scale = statistics.fmean(means)
+    if scale <= 0:
+        return {}
+    means = [min(1.6, max(0.4, x / scale)) for x in means]
+    return {i: means[(i - lo) % m] for i in range(lo, hi + 1)}
+
+
 def classify_region(a, lo, hi):
     """One active run of steps -> one class, with the evidence that chose it.
 
@@ -713,7 +996,7 @@ def classify_region(a, lo, hi):
         return r
 
     pad = _pad_evidence(a, lo, hi)
-    sp = _spikes(a, lo, hi)
+    sp = _extend_series(a, _spikes(a, lo, hi), lo, hi)
     strong = [s for s in sp if s["spike"]]
     idx = [s["i"] for s in strong]
     fit, cyc = _cycle_fit(idx, span)
@@ -800,14 +1083,80 @@ def classify_region(a, lo, hi):
                 s_seam *= 0.85
     r["scores"]["SEAM"] = round(s_seam, 3)
 
+    # --- score GRID ---
+    # No frame repeated and no step doubled, but the steps alternate on a strict
+    # beat.
+    #
+    # Both of those conditions are tested, and the second one is not optional.
+    # A clip losing a frame every ninth is periodic too - nine divides by three,
+    # so the phases disagree strongly and the statistic lights up - but there is
+    # nothing grid-like about it: frames are genuinely missing and a
+    # redistribution would smear that damage across the clip instead of
+    # repairing it. GRID is the residue class. It is claimed only where there is
+    # neither a repeat nor a drop to explain what was measured.
+    grid = _grid_evidence(a, lo, hi)
+    r["grid"] = grid
+    s_grid = 0.0
+    if (grid["m"] and grid["amp"] >= GRID_FLOOR and grid["F"] >= GRID_F
+            and n_drop <= 2
+            and not (pad["period"] and len(pad["members"]) >= 5)):
+        s_grid = min(1.0, 0.45 + 0.55 * min(1.0, (grid["amp"] - GRID_FLOOR) / 0.10))
+        if grid["F"] < 2 * GRID_F:
+            s_grid *= 0.9
+    r["scores"]["GRID"] = round(s_grid, 3)
+
     # IRREGULAR is deliberately NOT a scored hypothesis. It is what is left when
     # nothing else earns its place - big steps that ramp up and down instead of
     # standing alone, which is what fast motion looks like. Giving it a score of
     # its own only ever produced spurious ties.
     r["ramp_fraction"] = round(1 - len(strong) / len(sp), 2) if sp else 0.0
 
+    # --- does the winner stand on its own evidence? --------------------------
+    #
+    # Changed in 3.1, and this is the single change that recovers the most
+    # clips. The rule used to be: if the runner-up is within 0.12 of the winner,
+    # refuse the clip as AMBIGUOUS. The intent was right - never guess between
+    # two readings - but the test was measuring the wrong thing, because
+    # PAD, PULLDOWN and SEAM are NOT independent hypotheses.
+    #
+    # A padded clip IS a rate conversion. The repeats are how that particular
+    # converter did it, so PULLDOWN scores high on every padded clip by
+    # construction, and the two scores cannot separate what they both describe.
+    # Six clips in sixty were refused on pairs like PAD 1.00 / PULLDOWN 0.89 and
+    # SEAM 1.00 / PULLDOWN 0.98, and every one of them repaired correctly the
+    # moment the class was named by hand.
+    #
+    # So the gate is now on the winner's OWN evidence. Repeats on a solid beat
+    # are an observation; a handful of isolated doubled steps, well separated,
+    # is an observation; an implied source rate that lands on a rate a generator
+    # actually produces is an observation. The runner-up's score is used only to
+    # break a genuine tie where NEITHER class has evidence of its own - which is
+    # what AMBIGUOUS was always meant to mean.
+    #
+    # The order below is the order of directness. A repeat is seen. A doubled
+    # step is seen. A source rate is arithmetic on what was seen, so it yields
+    # to both. A grid is the residue: it is claimed only where there is neither
+    # a repeat nor a drop to explain the clip.
+    solid_pad = bool(pad["period"] and len(pad["members"]) >= 5
+                     and pad["cover"] >= 0.65)
+    solid_seam = bool(not solid_pad
+                      and 3 <= n_drop <= max(3, span // 8)
+                      and (not gaps or min(gaps) >= 6)
+                      and ratios and statistics.median(ratios) >= SEAM_STRENGTH)
+    solid_pull = bool(n_drop >= 5 and fit >= 0.80 and near_std <= 0.03)
+    solid_grid = bool(s_grid >= 0.40 and not solid_pad and not solid_seam
+                      and not solid_pull)
+    r["evidence"] = dict(PAD=solid_pad, SEAM=solid_seam,
+                         PULLDOWN=solid_pull, GRID=solid_grid)
+
     ranked = sorted(r["scores"].items(), key=lambda kv: -kv[1])
     top, second = ranked[0], (ranked[1] if len(ranked) > 1 else ("", 0.0))
+    # a class only gets to argue from its own evidence if it is actually in
+    # contention - it has to be the winner or within a whisker of it
+    standing = [k for k in ("PAD", "SEAM", "PULLDOWN", "GRID")
+                if r["evidence"][k] and r["scores"].get(k, 0.0) >= 0.40
+                and r["scores"].get(k, 0.0) >= top[1] - 0.12]
+    r["solid"] = False
     if top[1] < 0.40:
         # Three, again. One step measuring 1.41 against its neighbours is not
         # "bursts of fast motion", it is one step, and calling the clip
@@ -817,9 +1166,18 @@ def classify_region(a, lo, hi):
         # as its known-good source.
         r["klass"] = "IRREGULAR" if len(sp) >= 3 else "CLEAN"
         r["why"].append("no explanation scores high enough; nothing repaired here")
+    elif standing:
+        r["klass"] = standing[0]
+        r["solid"] = True
+        if standing[0] != top[0]:
+            r["why"].append(
+                f"{standing[0]} and {top[0]} both score high, but they are two "
+                f"descriptions of the same event; {standing[0]} is the one that "
+                f"was directly measured")
     elif top[1] - second[1] < 0.12:
         r["klass"] = "AMBIGUOUS"
-        r["why"].append(f"{top[0]} {top[1]:.2f} and {second[0]} {second[1]:.2f} fit about equally")
+        r["why"].append(f"{top[0]} {top[1]:.2f} and {second[0]} {second[1]:.2f} fit "
+                        f"about equally, and neither has evidence of its own")
     else:
         r["klass"] = top[0]
 
@@ -856,6 +1214,11 @@ def classify_region(a, lo, hi):
         r["doubles"] = sorted(prs.values())
         r["unpaired"] = unpaired
         r["exact"] = not unpaired
+    elif r["klass"] == "GRID":
+        # the whole region: on an uneven grid every frame is in the wrong place,
+        # which is the same situation as a rate conversion
+        r["advance"] = _grid_advance(a, lo, hi, grid["m"])
+        r["defect"] = (lo, hi + 1)
     else:
         r["defect"] = (lo, hi + 1)
     return r
@@ -865,6 +1228,9 @@ def classify_region(a, lo, hi):
 
 ALREADY = ("_rebuilt", "_seamfix", "_clean_", "_cadence", "_fixed", "_apo8",
            "_apo-8", "_ganim", "_chr-", "_repaired", "_even")
+
+# the classes that earn a repair. Everything else is left exactly as it is.
+REPAIRABLE = ("PAD", "SEAM", "PULLDOWN", "GRID")
 
 
 class Verdict:
@@ -893,6 +1259,25 @@ def diagnose(path, force=False, assume_fps=24.0, force_class=None):
 
     tag_hits = [t for t in ("apo-", "ganim", "chr-", "prob-", "iris-", "thm-")
                 if t in con.tags.lower()]
+
+    # A Topaz tag used to be a printed warning and nothing more. That was not
+    # enough. "Use the raw download" is the most load-bearing rule in here - the
+    # repair works by reading the ORIGINAL defect, and an enhance pass has both
+    # erased that evidence and invented pixels of its own. A warning that scrolls
+    # past in a window nobody is watching is not a rule, it is a hope. It also
+    # fails in a way that looks like success: the motion comes out even, the
+    # numbers look fine, and the picture carries a repaint that no longer matches
+    # the grain around it.
+    #
+    # So it refuses, like the filename markers do, and --force still overrides for
+    # anyone who knows what they are doing.
+    if tag_hits and refuse is None and not force:
+        refuse = ("enhanced-already",
+                  f"this file carries an enhancement tag ({', '.join(tag_hits)}), so it has "
+                  f"been through Topaz or a similar pass already - it is not a raw download. "
+                  f"These tools read the ORIGINAL defect to work out what happened, and that "
+                  f"pass has erased it and added pixels of its own. Repair the raw file, THEN "
+                  f"enhance. --force overrides.")
 
     if con.fps and abs(con.fps - assume_fps) > 0.15 and refuse is None:
         refuse = ("not-24fps",
@@ -938,6 +1323,11 @@ def diagnose(path, force=False, assume_fps=24.0, force_class=None):
                     pad_out = max(2, (r["cycle"] or 6) // 3)
                     r["defect"] = (max(r["lo"], min(idx) - pad_out),
                                    min(r["hi"], max(idx) + pad_out) + 1)
+                elif force_class == "GRID":
+                    m = (r.get("grid") or {}).get("m") or 2
+                    r["advance"] = _grid_advance(a, r["lo"], r["hi"], m)
+                    r["defect"] = (r["lo"], r["hi"] + 1)
+                r["solid"] = True
 
     holds = [h for seg in a.segments for h in seg["holds"]]
     held_steps = sum(y - x + 1 for x, y in holds)
@@ -989,6 +1379,28 @@ def diagnose(path, force=False, assume_fps=24.0, force_class=None):
     if overall == "CLEAN" and held_steps > 0.6 * a.ns:
         overall = "STATIC"
 
+    # --- a bad region is not outvoted by good ones ---------------------------
+    #
+    # Added in 3.1. The clip verdict was the class covering the most frames, and
+    # nothing else. On a clip split into three regions where the first was
+    # padded and the other two were clean, the whole-clip verdict came back
+    # CLEAN and the repair did nothing at all - while the log row underneath it
+    # read regions=PAD|CLEAN|CLEAN, rep=8, cov=1.00. The engine had found the
+    # fault, written it down, and then outvoted itself.
+    #
+    # One region with real evidence of a repairable fault makes the clip
+    # repairable. It costs nothing to be right about this: the repair has always
+    # been planned region by region, so the clean stretches are copied through
+    # untouched either way. All that was ever missing was permission to start.
+    if overall not in REPAIRABLE:
+        hurt = [r for r in regions if r["klass"] in REPAIRABLE and r.get("solid")]
+        if hurt:
+            big = max(hurt, key=lambda r: r["span"])
+            overall = big["klass"]
+            big["why"].append(
+                f"the rest of the clip is fine; this region is repaired and "
+                f"everything outside it is copied untouched")
+
     return Verdict(
         path=path, name=base, version=VERSION,
         ok=refuse is None,
@@ -1005,7 +1417,34 @@ def diagnose(path, force=False, assume_fps=24.0, force_class=None):
 
 # ------------------------------------------------------------------ 5. plan
 
-def plan(v, seam_window=8):
+def _paired_repeat(a, s, lo, hi, reach=2):
+    """The wasted slot belonging to an isolated doubled step, if there is one.
+
+    A held frame and a dropped frame look the same from a distance and are not
+    the same thing at all. When a generator freezes a frame it has to lose a
+    real one to keep the count, so the damage comes in a PAIR: a repeat sitting
+    next to a step that carries two frames of motion. When it simply drops a
+    frame, there is no repeat anywhere near - the step is doubled and that is
+    all.
+
+    Telling them apart is what makes the repair work. The pair has a slot that
+    can be painted into, so one frame is repainted and the freeze is gone. The
+    lone drop has no spare slot, so the best that can be done is to spread the
+    lurch over a short window - which is a smaller win, and it must not be
+    mistaken for the bigger one.
+
+    Added in 3.1, because the SEAM repair had been treating every hitch as the
+    second kind. It found K2's held frame at 70 of 241 unaided, repainted 57
+    frames around it, and left the held frame sitting exactly where it was.
+    """
+    for d in range(1, reach + 1):
+        for j in (s - d, s + d):
+            if lo <= j <= hi and a.dup[j]:
+                return j
+    return None
+
+
+def plan(v, seam_window=4):
     """Turn the verdict into target positions on a motion timeline.
 
     Two arrays, both one entry per delivered frame:
@@ -1043,11 +1482,23 @@ def plan(v, seam_window=8):
     # predecessor: time passed, nothing moved, and it advances by one like any
     # other. Treating those two the same is what used to drag held passages into
     # the repair and paint invented motion into a deliberate freeze.
-    spike_at, lost = set(), set()
+    spike_at, lost, grid_adv, paired = set(), set(), {}, {}
     for r in v.regions:
-        if r["klass"] in ("SEAM", "PULLDOWN"):
+        if r["klass"] == "SEAM":
             for s in r["spikes"]:
                 spike_at.add(s["i"])
+                j = _paired_repeat(a, s["i"], r["lo"], r["hi"])
+                if j is not None and j not in lost:
+                    # a held frame: the repeat is a wasted slot exactly like a
+                    # padded one, and is repainted in place. One frame, not a
+                    # window - and the freeze actually goes.
+                    lost.add(j)
+                    paired[s["i"]] = j
+        elif r["klass"] == "PULLDOWN":
+            for s in r["spikes"]:
+                spike_at.add(s["i"])
+        elif r["klass"] == "GRID":
+            grid_adv.update(r.get("advance") or {})
         elif r["klass"] == "PAD":
             # the paired partners, not the loose spike list: one restored moment
             # per repeat, so the span comes out to a whole number of frames and
@@ -1055,7 +1506,14 @@ def plan(v, seam_window=8):
             spike_at.update(r.get("doubles", []))
             lost.update(r["pad"]["members"])
     for i in range(a.ns):
-        adv = 0.0 if i in lost else (2.0 if i in spike_at else 1.0)
+        if i in lost:
+            adv = 0.0
+        elif i in spike_at:
+            adv = 2.0
+        elif i in grid_adv:
+            adv = grid_adv[i]
+        else:
+            adv = 1.0
         pos[i + 1] = pos[i] + adv
 
     target = list(pos)
@@ -1072,11 +1530,30 @@ def plan(v, seam_window=8):
             # whether or not we found every last drop.
             motion = (d_hi - d_lo) * (r.get("snap_rate") or 24.0) / 24.0
             corrections.append((d_lo, d_hi, "PULLDOWN", motion))
+        elif r["klass"] == "GRID":
+            corrections.append((d_lo, d_hi, "GRID", None))
         elif r["klass"] == "SEAM":
             for s in r["spikes"]:
-                lo = max(r["lo"], s["i"] - seam_window)
-                hi = min(r["hi"] + 1, s["i"] + 1 + seam_window)
-                if hi - lo >= 3:
+                j = paired.get(s["i"])
+                if j is not None:
+                    # a held frame and its doubled partner. The span only has to
+                    # reach from the real frame before the pair to the real
+                    # frame after it, which is three or four frames - and of
+                    # those, exactly one is not a real picture and gets painted.
+                    lo = max(r["lo"], min(j, s["i"]))
+                    hi = min(r["hi"] + 1, max(j, s["i"]) + 2)
+                    while hi > lo and (hi - 1) in lost:
+                        hi -= 1
+                    while lo < hi and (lo - 1) in lost:
+                        lo += 1
+                else:
+                    # nothing was repeated, so there is no slot to paint into
+                    # and the frame is simply gone. The lurch is spread over a
+                    # short window instead. That is a smaller repair and it is
+                    # honest about being one.
+                    lo = max(r["lo"], s["i"] - seam_window)
+                    hi = min(r["hi"] + 1, s["i"] + 1 + seam_window)
+                if hi - lo >= 2 and (lo - 1) not in lost and (hi - 1) not in lost:
                     corrections.append((lo, hi, "SEAM", None))
 
     # merge overlapping spans so a frame is only ever corrected once
@@ -1095,6 +1572,11 @@ def plan(v, seam_window=8):
             continue
         span = motion if motion else (pos[hi] - pos[lo])
         k = hi - lo
+        if kind == "GRID" and abs(span - k) > 1e-6:
+            # a grid fault moves frames about inside the region; it never adds
+            # or removes motion. If the arithmetic has drifted, the frame grid
+            # is right and the arithmetic is wrong.
+            span = float(k)
         if kind == "PAD" and abs(span - k) > 1e-6:
             # Padding restores to a whole number of frames or it is not padding.
             # If the arithmetic has not closed, snap to the 24 fps grid rather
@@ -1117,6 +1599,226 @@ def plan(v, seam_window=8):
     real = sorted(set(real))
     return dict(pos=pos, target=target, real=real, spans=merged, lost=sorted(lost),
                 touched=sum(1 for i in range(n) if abs(target[i] - pos[i]) > 1e-6))
+
+
+def _detail(buf, w, h, step=2):
+    """Mean |laplacian| - how much fine structure a frame carries."""
+    tot = 0
+    n = 0
+    for y in range(2, h - 2, step):
+        row = y * w
+        for x in range(2, w - 2, step):
+            i = row + x
+            tot += abs(4 * buf[i] - buf[i - 1] - buf[i + 1] - buf[i - w] - buf[i + w])
+            n += 1
+    return tot / n if n else 0.0
+
+
+def _ordinal(n):
+    """2 -> '2nd', not '2th'. A one-in-two clip is a common case and it looked silly."""
+    try:
+        n = int(n)
+    except Exception:
+        return str(n)
+    if 10 <= n % 100 <= 20:
+        return f"{n}th"
+    return f"{n}{ {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th') }".replace(" ", "")
+
+
+def _corr(xs, ys):
+    n = len(xs)
+    if n < 8:
+        return None
+    mx = sum(xs) / n
+    my = sum(ys) / n
+    sxy = sxx = syy = 0.0
+    for a, b in zip(xs, ys):
+        da = a - mx
+        db = b - my
+        sxy += da * db
+        sxx += da * da
+        syy += db * db
+    if sxx <= 0 or syy <= 0:
+        return None
+    return sxy / math.sqrt(sxx * syy)
+
+
+def ghosting(path, repainted, width=640, step=3):
+    """Are the repainted frames double images rather than invented ones?
+
+    An invented frame G sits between two real ones, A and B. Look at the two
+    halves of the change across it and ask how alike they are:
+
+        corr(G - A,  B - G)
+
+    A straight average - G = (A+B)/2 - makes those two halves the SAME picture,
+    so this comes out at exactly 1.0 whatever the footage. Real motion between A
+    and B makes them differ, and on untouched material the figure sits near zero
+    or below.
+
+    This needs its own measurement because a detail score cannot see it: a
+    doubled edge counts as detail retained, so a blend can score WELL on
+    sharpness while being the single most objectionable thing this tool can
+    produce. On fast action that is not blur, it is two pictures on top of each
+    other, and the eye reads it as a stutter of its own.
+
+    Returns (painted_median, real_median, n_painted). Compare the two: painted
+    should sit near real. Far above it means averaging.
+    """
+    con = probe(path)
+    if not repainted or not con.width or not con.height:
+        return None
+    rp = sorted(set(int(i) for i in repainted))
+    total = con.nb_frames or 0
+
+    need = set()
+    for i in rp:
+        need.update((i - 1, i, i + 1))
+    # a baseline from this clip's own untouched frames, so the number is
+    # calibrated to the footage rather than to a constant someone chose
+    base_mid = []
+    i = 2
+    while i < (total - 2 if total else 0) and len(base_mid) < 20:
+        if not any(k in set(rp) for k in (i - 1, i, i + 1)):
+            base_mid.append(i)
+            need.update((i - 1, i, i + 1))
+            i += 4
+        else:
+            i += 1
+    if total:
+        need = {k for k in need if 0 <= k < total}
+    if len(need) < 6:
+        return None
+
+    W = width
+    H = int(round(con.height * W / con.width / 2)) * 2
+    if H < 8:
+        return None
+    size = W * H
+    keep = {}
+    try:
+        proc = subprocess.Popen(
+            ["ffmpeg", "-v", "error", "-i", path,
+             "-vf", f"scale={W}:{H},format=gray", "-f", "rawvideo", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    idx = 0
+    try:
+        while True:
+            buf = proc.stdout.read(size)
+            if len(buf) < size:
+                break
+            if idx in need:
+                keep[idx] = buf
+            idx += 1
+    except Exception:
+        return None
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+
+    def score(i):
+        A, G, B = keep.get(i - 1), keep.get(i), keep.get(i + 1)
+        if not (A and G and B):
+            return None
+        xs = [G[k] - A[k] for k in range(0, size, step)]
+        ys = [B[k] - G[k] for k in range(0, size, step)]
+        return _corr(xs, ys)
+
+    painted = [x for x in (score(i) for i in rp) if x is not None]
+    plain = [x for x in (score(i) for i in base_mid) if x is not None]
+    if len(painted) < 3 or len(plain) < 3:
+        return None
+    return (statistics.median(painted), statistics.median(plain), len(painted))
+
+
+def texture(path, repainted, width=960):
+    """Do the repainted frames carry the same fine detail as the frames beside them?
+
+    Everything else in this file measures MOTION. That is not the whole story, and
+    a clip can pass every one of those tests and still look wrong.
+
+    An invented frame is built out of two real ones, and averaging costs
+    high-frequency detail - fine texture, film grain, the inside of foliage. So a
+    repainted frame can sit in exactly the right place and still be softer than
+    its neighbours. On a padded clip the repaints land every fourth frame, which
+    means that softness arrives on a regular beat; and a texture that pulses six
+    times a second is far more visible than one that is uniformly soft. Measured
+    on a real clip: repainted frames read 0.90-0.94 against neighbours at 1.00,
+    and it was described as "not as smooth" by someone who could see it plainly
+    and could not name it.
+
+    The cure is not a better interpolator - it is a pass over EVERY frame
+    afterwards, so that whatever the repaint did to those frames is done to all of
+    them and nothing stands out. That is why cadence-then-Topaz looks better than
+    Topaz-then-cadence, and this is the measurement that says so out loud.
+
+    Returns (ratio, n_repainted, n_neighbours), ratio being the median detail of
+    the repainted frames over the median of their untouched immediate neighbours.
+    1.0 is a match. Below about 0.95 is worth acting on. None if it cannot tell.
+    """
+    con = probe(path)
+    if not repainted or not con.width or not con.height:
+        return None
+    rp = set(int(i) for i in repainted)
+    need = set()
+    for i in rp:
+        need.update((i - 1, i, i + 1))
+    total = con.nb_frames or 0
+    if total:
+        need = {i for i in need if 0 <= i < total}
+    if len(need) < 6:
+        return None
+
+    W = width
+    H = int(round(con.height * W / con.width / 2)) * 2
+    if H < 8:
+        return None
+    size = W * H
+    painted, plain = [], []
+    try:
+        proc = subprocess.Popen(
+            ["ffmpeg", "-v", "error", "-i", path,
+             "-vf", f"scale={W}:{H},format=gray", "-f", "rawvideo", "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    idx = 0
+    try:
+        while True:
+            buf = proc.stdout.read(size)
+            if len(buf) < size:
+                break
+            if idx in need:
+                d = _detail(buf, W, H)
+                (painted if idx in rp else plain).append(d)
+            idx += 1
+    except Exception:
+        return None
+    finally:
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+
+    if len(painted) < 3 or len(plain) < 3:
+        return None
+    a = statistics.median(painted)
+    b = statistics.median(plain)
+    if b <= 0:
+        return None
+    return (a / b, len(painted), len(plain))
 
 
 def evenness(path, a=None):
@@ -1190,6 +1892,7 @@ CLASS_TEXT = {
     "PAD": "padded repeats - every Nth frame is a copy of the one before it",
     "SEAM": "isolated missing frames - a hitch every second or so",
     "PULLDOWN": "frames thrown away throughout, to force a faster clip into 24 fps",
+    "GRID": "no frame repeated, but the steps alternate long/short on a strict beat",
     "IRREGULAR": "big steps, but they are bursts of fast motion, not a defect",
     "AMBIGUOUS": "two explanations fit about equally well",
 }
@@ -1232,7 +1935,7 @@ def describe(v):
             continue
         line = f"    frames {r['lo']}-{r['hi'] + 1}: {r['klass']}"
         if r["klass"] == "PAD":
-            line += (f" - every {r['pad']['period']}th frame is a repeat, "
+            line += (f" - every {_ordinal(r['pad']['period'])} frame is a repeat, "
                      f"{len(r['pad']['members'])} of them, "
                      f"beat {r['pad']['cover']:.0%} solid")
         elif r["klass"] == "PULLDOWN":
@@ -1245,6 +1948,11 @@ def describe(v):
         elif r["klass"] == "SEAM":
             line += (f" - {len(r['spikes'])} isolated missing frames, before frames "
                      f"{[s['i'] + 1 for s in r['spikes']][:10]}")
+        elif r["klass"] == "GRID":
+            g = r.get("grid") or {}
+            line += (f" - no frame is repeated, but every {g.get('m')} steps the "
+                     f"motion repeats a long/short pattern, {g.get('amp', 0):.0%} "
+                     f"apart (F={g.get('F')})")
         elif r["klass"] == "IRREGULAR":
             line += f" - {len(r['all_candidates'])} big steps"
             if r["ramp_fraction"] >= 0.4:
@@ -1260,6 +1968,12 @@ def describe(v):
             print("      evidence: " + ", ".join(
                 f"{k} {vv:.2f}" for k, vv in sorted(r["scores"].items(),
                                                     key=lambda kv: -kv[1])))
+        # 3.1: these were being collected and never shown. They are the engine's
+        # own reasoning about a close call, which is exactly what you want in
+        # front of you when a clip comes out wrong.
+        for note in r.get("why", []):
+            for k, ln in enumerate(wrap(note, 66)):
+                print(("      note: " if k == 0 else "            ") + ln)
 
 
 def plan_summary(v, pl, n_repaint, fps=24.0, edge=()):
@@ -1298,6 +2012,11 @@ LOG_COLUMNS = [
     "cuts", "held_frames", "regions",
     "repainted", "method", "spread_before", "worst_before",
     "spread_after", "worst_after", "outcome", "tool",
+    # appended, so rows written by older versions still line up under their
+    # own header - they simply stop one column short
+    "texture",
+    # 3.1
+    "grid_m", "grid_amp", "grid_F", "evidence",
 ]
 
 
@@ -1307,7 +2026,7 @@ def _cell(x):
 
 
 def log_run(v, action, repainted=None, method=None, before=None, after=None,
-            outcome=None, folder=None):
+            outcome=None, folder=None, texture=None):
     try:
         import datetime
         folder = folder or os.path.dirname(os.path.abspath(__file__))
@@ -1342,11 +2061,35 @@ def log_run(v, action, repainted=None, method=None, before=None, after=None,
             "worst_after": after[1] if after else None,
             "outcome": outcome or "",
             "tool": VERSION,
+            "texture": (f"{texture[0]:.3f}" if texture else ""),
+            "grid_m": (big.get("grid") or {}).get("m"),
+            "grid_amp": f"{(big.get('grid') or {}).get('amp', 0):.3f}",
+            "grid_F": (big.get("grid") or {}).get("F"),
+            "evidence": "|".join(k for k, ok in (big.get("evidence") or {}).items() if ok),
         }
         new = not os.path.exists(path)
+        head = "\t".join(LOG_COLUMNS)
+        if not new:
+            # When a column is added, an existing log keeps its old header and
+            # every new row then runs off the end of it. Because columns are only
+            # ever APPENDED, the old header is a prefix of the new one, so the fix
+            # is to widen the header in place: earlier rows are simply short, and
+            # a short row under a wider header reads as empty cells, which is
+            # exactly what those runs measured - nothing.
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                if lines and lines[0].rstrip("\n") != head:
+                    old_cols = lines[0].rstrip("\n").split("\t")
+                    if old_cols == LOG_COLUMNS[:len(old_cols)]:
+                        lines[0] = head + "\n"
+                        with open(path, "w", encoding="utf-8") as f:
+                            f.writelines(lines)
+            except Exception:
+                pass
         with open(path, "a", encoding="utf-8") as f:
             if new:
-                f.write("\t".join(LOG_COLUMNS) + "\n")
+                f.write(head + "\n")
             f.write("\t".join(_cell(row.get(c)) for c in LOG_COLUMNS) + "\n")
         return path
     except Exception:

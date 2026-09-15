@@ -3,6 +3,13 @@ cadence-log.tsv
 launch-log.txt
 __pycache__/
 *.pyc
+.DS_Store
+
+# local snapshots of earlier versions
+_versions/
+
+# test clips are built on demand, never committed
+tests/clips/
 
 # video files should never end up in the repo
 *.mp4

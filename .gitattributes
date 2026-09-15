@@ -1,2 +1,13 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Line endings that MATTER, pinned so a checkout on the wrong platform cannot
+# break them. A .command file that arrives with Windows line endings fails on a
+# Mac with "bad interpreter: /bin/bash^M", which is a baffling error for
+# something the user did nothing wrong to cause.
+*.command  text eol=lf
+*.sh       text eol=lf
+*.bat      text eol=crlf
+
+# and the launchers are meant to be double-clicked
+*.command  -diff

@@ -6,8 +6,9 @@ echo.
 echo   FIX VIDEO
 echo.
 echo   Works out what is actually wrong with the clip, then applies the one
-echo   repair that fits it. Skipped frames, held frames and dropped frames are
-echo   three different faults and they get three different treatments.
+echo   repair that fits it. Skipped frames, held frames, dropped frames and an
+echo   uneven beat are four different faults and they get four different
+echo   treatments.
 echo.
 echo   The result is always 24 fps, the same number of frames and the same
 echo   length as the original, so it drops straight on your timeline and the

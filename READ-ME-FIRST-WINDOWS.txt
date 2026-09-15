@@ -1,9 +1,13 @@
 ========================================================
-  EVEN FRAMES  -  START HERE
+  EVEN FRAMES  -  START HERE  (Windows)
 ========================================================
 
 Repairs the once-a-second stutter in AI-generated video.
-Windows. Free. You do not need to know how to code.
+Free. You do not need to know how to code.
+
+If you are on a Mac, read READ-ME-FIRST-MAC.txt instead.
+Everything the tool does is identical on both; only the
+icons differ.
 
 
 THE ICONS
@@ -21,7 +25,7 @@ says which, and why, before it does anything.
 
 Icon 5 is not for your videos. It checks the TOOLS. Run it
 after anything in here changes: it takes one of your clean
-clips, breaks a copy four ways it knows the answer to, and
+clips, breaks a copy six ways it knows the answer to, and
 confirms the repairs still work. All PASS means nothing that
 used to work got broken.
 
@@ -32,7 +36,7 @@ used to work got broken.
 
 WHAT THIS IS
 
-Your AI videos hiccup every second or so. There are three
+Your AI videos hiccup every second or so. There are four
 different faults that all look like the same hiccup:
 
   HELD FRAMES     every 4th picture is a copy of the one
@@ -46,7 +50,15 @@ different faults that all look like the same hiccup:
   OUT               second and squeezed into 24 by throwing
                     frames away all the way along.
 
-They need three different repairs, and doing the wrong one
+  UNEVEN BEAT     nothing repeated and nothing missing, but
+                  the pictures do not sit an equal distance
+                  apart. Long gap, short gap, long gap. This
+                  is the sneaky one - it looks perfect on
+                  paper and stutters on screen. Earlier
+                  versions of these tools could not see it
+                  at all.
+
+They need four different repairs, and doing the wrong one
 makes the clip worse. Drag your file onto 1-FIX-VIDEO and it
 sorts that out for you.
 
@@ -58,6 +70,11 @@ WHAT YOU GET BACK
 
 A file called <yourname>_even.mp4 next to the original, and
 a small text file saying what was done to it.
+
+If a file ever comes back named _even_REJECTED, the tool is
+telling you it checked its own work and the result was not
+good enough to use. Keep your original. The rejected file is
+left there only so you can see what went wrong.
 
 It is always 24 fps, always the same number of frames, and
 always exactly as long as the original. So it drops straight
@@ -73,8 +90,21 @@ ALWAYS USE THE RAW DOWNLOAD
 
 Not a Topaz file. Not a file you already ran this on. The
 repair works by reading the original damage to figure out
-what happened, and an earlier pass has already erased it.
-The tool will refuse if it spots this, but start clean.
+what happened, and an earlier pass has already erased it AND
+invented pixels of its own. The tool refuses these outright -
+by the name, and by the tag Topaz leaves inside the file.
+
+THE ORDER MATTERS, AND IT IS THIS WAY ROUND:
+
+    raw download -> 1-FIX-VIDEO -> Topaz / upscale -> grade
+
+Repair first, enhance second. Do it the other way round and
+you get a clip whose motion is right and whose picture is not:
+the repaired frames stay slightly softer than the ones either
+side of them, and because they land on a regular beat that
+reads as a pulse rather than as softness. An enhancement pass
+afterwards treats every frame alike and irons it out. Icon 1
+measures this now and tells you when it matters - see TEXTURE.
 
 
 IF IT SAYS "NO BETTER"
@@ -198,13 +228,23 @@ The window thinks for a bit, then prints four sections.
         DIAGNOSIS: PAD
           frames 0-167: PAD - every 4th frame is a repeat,
           33 of them, beat 89% solid
-          evidence: PAD 0.94, PULLDOWN 0.56, SEAM 0.00
+          evidence: PAD 0.94, PULLDOWN 0.56, SEAM 0.00,
+                    GRID 0.00
 
       Those last numbers are how well each explanation fits.
-      The winner has to beat the runner-up by a clear margin.
-      If two are close it says AMBIGUOUS and stops, rather
-      than guessing - guessing is how you end up with the
-      wrong repair applied to a good clip.
+      The winner has to stand on its OWN evidence - repeats
+      on a solid beat, isolated doubled steps, a source rate
+      that lands where a real generator would have put it.
+      Only when nothing in the clip favours one reading over
+      another does it say AMBIGUOUS and stop, rather than
+      guessing - guessing is how you end up with the wrong
+      repair applied to a good clip.
+
+      (Up to version 3.0 it also stopped whenever two scores
+      came out close, which refused a lot of clips it could
+      actually have fixed. PAD and PULLDOWN are not rivals:
+      a padded clip IS a rate conversion, so both score high
+      on the same clip by construction.)
 
       It also tells you about hard cuts inside the clip and
       about held passages, and it will not touch either.
@@ -241,6 +281,114 @@ The window thinks for a bit, then prints four sections.
         ** NO BETTER - do not use this file **
 
       then believe it. Keep your original and open an issue on GitHub.
+
+
+  TEXTURE
+
+      The last line of the CHECK is about the picture, not the
+      movement:
+
+        texture: repainted frames match the ones beside them
+        (0.98x) - nothing more to do
+
+      An invented frame is built out of two real ones, and
+      averaging costs fine detail. So a repaired frame can sit
+      in exactly the right place and still come out a little
+      softer than its neighbours. Above 0.95 you will never
+      see it. Below that it says so, and says what to do: run
+      a pass over EVERY frame afterwards - Topaz ganim, or any
+      denoise or sharpen applied to the whole clip - so that
+      every frame gets the same treatment and none of them
+      stands out.
+
+      This is the one thing the repair cannot settle by
+      itself, so it measures it and hands it to you rather
+      than staying quiet about it.
+
+
+  MISSING FRAMES COME ON A BEAT
+
+      A generator that drops a frame does it on a rhythm -
+      once a second is the usual one. How BIG each hitch
+      measures depends on how fast the picture happens to be
+      moving at that instant, so on a slower passage one of
+      them can land just under the threshold and be missed
+      while its neighbours are found.
+
+      That is the worst way for this tool to be wrong: it
+      reports the stretch as repaired and leaves one skip in
+      it.
+
+      So once three or more hitches line up evenly, the beat
+      itself becomes evidence. At the positions that beat
+      predicts - and nowhere else - the bar comes down, and a
+      hitch that would otherwise be too small to call is
+      picked up because of the company it keeps. You will see
+      the count go up:
+
+        SEAM - 4 isolated missing frames, before frames
+        [25, 48, 72, 96]
+
+      where an earlier version of this found three.
+
+
+  DOUBLE IMAGES
+
+      The line below texture is the one to obey:
+
+        double image: none - repainted frames read +0.04
+        against -0.20 for the real ones
+
+      There are two ways to invent a frame. One works out
+      where things MOVED and draws them there. The other
+      simply averages the frame before and the frame after -
+      and on fast action that is not blur, it is two pictures
+      on top of each other. It reads as a stutter of its own
+      and no grade will hide it.
+
+      The tool measures it, calibrated against the real
+      frames in your own clip, and refuses to hand you a file
+      full of them however even the motion came out. If you
+      ever see
+
+        ** DOUBLE IMAGES - do not use this file **
+
+      keep the original.
+
+
+  WHEN THE INVENTED FRAMES ARE STILL NOT GOOD ENOUGH
+
+      On fast motion, nothing free invents a clean frame. The
+      answer is not a better guess - it is to stop guessing.
+
+      Render a slow-motion pass of the SAME clip, at a whole
+      multiple - 2x is usually right - then:
+
+        1-FIX-VIDEO.bat  --from-slowmo "yourclip 2x.mp4"
+
+      Every gap is then filled with a frame something actually
+      drew, with its own coherent motion blur. Nothing is
+      invented at all.
+
+      TWO RULES for that slow-motion file:
+
+        Same clip. Not another take, not a re-generation.
+
+        Slow-motion ONLY. No upscale, no denoise, no motion
+        deblur, no added grain, no regrade. The picked frames
+        land BETWEEN your original frames and have to match
+        them; anything else applied to the whole clip makes
+        every picked frame stand out - which is the fault you
+        were trying to remove, with the sign flipped. Motion
+        deblur is the tempting one: it makes the invented
+        frames CRISPER than the real ones, and it looks wrong
+        in exactly the same way.
+
+      The tool checks this for you. Frame k times the factor
+      in that file should still BE frame k of your source, and
+      it compares a few and says so before it uses anything.
+
+      Enhance afterwards, over the whole clip, as always.
 
 
 You get a new file named
@@ -349,10 +497,16 @@ It says "Nothing to repair" and does nothing
       DIAGNOSIS section above it says what it measured.
 
 It says AMBIGUOUS and stops
-      Two explanations fit the clip about equally well and it
-      will not guess between them. Open a GitHub issue with the
-      DIAGNOSIS block; the evidence scores say what it was
-      torn between.
+      Two explanations fit the clip about equally well and
+      NEITHER has evidence of its own, so it will not guess
+      between them. Rare. If you know which it is, run it
+      from a black window and name the class yourself:
+
+          python cadence_fix.py "clip.mp4" --force-class PAD
+
+      (or SEAM, PULLDOWN, GRID). Otherwise open a GitHub
+      issue with the DIAGNOSIS block; the evidence scores say
+      what it was torn between.
 
 It says NOT ENOUGH ROOM
       Frame extraction needs a few hundred MB for 1080p and a
@@ -372,7 +526,8 @@ Something else
 WHAT EACH FILE IN THIS FOLDER IS
 --------------------------------------------------------
 
-  START-HERE.txt              this page
+  READ-ME-FIRST-WINDOWS.txt   this page
+  READ-ME-FIRST-MAC.txt       the same, for Mac users
   0-SETUP-CHECK.bat           tells you if setup worked
   1-FIX-VIDEO.bat             drag a video on - fixes it
   2-DIAGNOSE-ONLY.bat         drag a video on - what's wrong?
@@ -383,9 +538,15 @@ WHAT EACH FILE IN THIS FOLDER IS
                               (created on first run)
 
   README.md                   what this is, and how to install
+  CHANGELOG.md                what changed in each version, and why
+  LICENSE                     MIT - do what you like with it
   docs/HOW-IT-WORKS.md        how it works, and the proof
+  docs/TESTING-3.1.md         what was measured before 3.1 shipped
   docs/WHY-IT-HAPPENS.md      why the damage exists at all
   docs/BUILD-HISTORY.md       the build log, kept for reference
+
+  resolve\                    repair a whole Resolve timeline track
+                              (needs DaVinci Resolve STUDIO)
 
   cadence_core.py             the engine - measures and decides
   cadence_fix.py              the code behind icon 1

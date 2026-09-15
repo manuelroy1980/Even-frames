@@ -8,7 +8,7 @@ echo.
 echo   Checks that the repair tools still do what they used to do.
 echo.
 echo   It takes one of your CLEAN clips, makes a small copy, breaks that copy
-echo   in four ways it already knows the answer to, and checks the tools get
+echo   in six ways it already knows the answer to, and checks the tools get
 echo   each one right and put it back. Your file is never touched.
 echo.
 echo   Run this after anything in this folder changes. If every line says

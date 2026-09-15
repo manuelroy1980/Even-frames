@@ -47,8 +47,13 @@ args = sys.argv[2:]
 if not args:
     raw = os.environ.get("RAW", "").strip()
     if raw:
+        # Windows and macOS hand you a dragged path in two different shapes.
+        # Windows quotes anything with a space in it and leaves the path alone;
+        # the Terminal escapes the space with a backslash instead. Parsing one
+        # the other's way splits "My Clip.mp4" into two files that do not exist,
+        # which is a baffling error message for something the user did right.
         try:
-            args = shlex.split(raw, posix=False)
+            args = shlex.split(raw, posix=(os.name != "nt"))
         except ValueError:
             args = raw.split()
         args = [x.strip('"').strip("'") for x in args if x.strip('"').strip("'")]
@@ -91,15 +96,20 @@ for i, f in enumerate(files, 1):
         print("   >>> COULD NOT START:", e)
         bad.append((f, "could not start")); continue
     if rc != 0:
-        print("   >>> THIS ONE FAILED")
-        bad.append((f, f"exit code {rc}"))
+        print("   >>> THIS ONE DID NOT PRODUCE A USABLE FILE - read the lines above")
+        bad.append((f, "failed, or the result was rejected by its own checks"))
 
 print()
 print("=" * 26 + " ALL DONE " + "=" * 26)
 print(f"  {len(files)} file(s) processed.  Problems: {len(bad)}")
 for f, why in bad:
     print(f"    - {os.path.basename(f)}: {why}")
-if not bad and verb == "fix":
+if verb == "fix":
     print("  Repaired files are saved next to their originals, named _even.")
     print("  Each one has a _even_REPORT.txt beside it saying what was done.")
+    if bad:
+        print()
+        print("  Anything named _even_REJECTED FAILED ITS OWN CHECKS. Keep the")
+        print("  original; that file is kept only so you can see what went wrong.")
 print()
+sys.exit(1 if bad else 0)

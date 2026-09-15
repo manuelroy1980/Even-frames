@@ -1,18 +1,24 @@
 # How Even Frames works
 
-Rebuilt 2026-09-04. The long build log that got us here is in
-`BUILD-HISTORY.md`; everything it concluded is still true, and the
-places where it was wrong are called out below.
+The engineering notes behind Even Frames: what it measures, why it measures that
+and not something else, and what has been tested against ground truth.
+
+Rebuilt 2026-09-04 (version 3.0), extended 2026-09-14 (version 3.1). The long
+build log that got us here is in `BUILD-HISTORY.md`; everything it
+concluded is still true, and the places where it was wrong are called out below.
+`CHANGELOG.md` in the root has what 3.1 changed and why.
 
 ---
 
 ## The two buttons
 
-    0-SETUP-CHECK.bat      is Python and ffmpeg installed
-    1-FIX-VIDEO.bat        diagnose, then apply the one repair that fits
-    2-DIAGNOSE-ONLY.bat    same diagnosis, writes nothing
-    4-CHECK-TIMING.bat     does the repaired clip still fit the audio
-    5-SELF-TEST.bat        prove the repairs still work, on known damage
+    0-SETUP-CHECK      is Python and ffmpeg installed
+    1-FIX-VIDEO        diagnose, then apply the one repair that fits
+    2-DIAGNOSE-ONLY    same diagnosis, writes nothing
+    4-CHECK-TIMING     does the repaired clip still fit the audio
+    5-SELF-TEST        prove the repairs still work, on known damage
+
+(`.bat` on Windows, `.command` on macOS. Same engine either way.)
 
 Drag raw downloads onto **1-FIX-VIDEO**. It works out what is wrong and does the
 matching repair. There is nothing to choose.
@@ -247,10 +253,16 @@ so they cannot tell you two different stories about the same clip.
                             any arithmetic. Nothing is ever interpolated across
                             a cut.
 
-    4  CLASSIFY EACH REGION separately, against evidence, with a margin. Every
-                            hypothesis is scored; the winner must beat the
-                            runner-up. When nothing wins clearly the answer is
-                            AMBIGUOUS and the repair stops rather than guessing.
+    4  CLASSIFY EACH REGION separately, against evidence. Every hypothesis is
+                            scored, and the winner has to stand on its OWN
+                            evidence rather than on the gap to the runner-up -
+                            PAD, PULLDOWN and SEAM are three descriptions of the
+                            same event and score high together by construction.
+                            Only when NEITHER of two close readings has evidence
+                            of its own is the answer AMBIGUOUS, and the repair
+                            stops rather than guessing. (3.1: before this, a
+                            close pair alone was enough to refuse, and it refused
+                            six clips in sixty that it could have repaired.)
 
     5  PLAN THE REPAIR      as target positions on a motion timeline. Every
                             class produces the same shape of answer, so there is
@@ -267,8 +279,9 @@ so they cannot tell you two different stories about the same clip.
 | `CLEAN` | motion is already even | none | 0 |
 | `STATIC` | a held pose; the scene really stops | none | 0 |
 | `PAD` | every Nth frame is a copy — the real one was lost | repaint the wasted slot in place | ~1 in N |
-| `SEAM` | a handful of isolated missing frames | even out 8 frames either side of each | ~16 per hitch |
+| `SEAM` | a held frame, or a handful of isolated missing frames | repaint the frozen slot in place; where nothing was repeated, spread the lurch over 4 frames either side | 1 per hitch when a frame was held; ~8 when one was simply lost |
 | `PULLDOWN` | frames thrown away throughout, on a confirmed repeating cycle | rebuild the damaged stretch at the source rate | most of that stretch |
+| `GRID` | nothing repeated, nothing missing, but the steps alternate long/short on a strict beat | move every frame back onto an even grid | about half the region |
 | `IRREGULAR` | big steps, but they ramp with their neighbours — fast motion | none | 0 |
 | `AMBIGUOUS` | two explanations fit equally | none, and it says why | 0 |
 
@@ -387,6 +400,54 @@ the fallback.
 
 ---
 
+## The periodic grid, and the statistic that finds it  (3.1)
+
+The biggest blind spot in every version before 3.1, and the largest single class
+in the library — roughly sixty clips in four hundred, all of them called `CLEAN`.
+
+No frame is repeated, so the repeat detector sees nothing. No step is doubled, so
+the spike detector sees nothing. What is there instead is an alternation: long
+step, short step, long step, in strict phase across the whole frame, usually 6 to
+18%. It is what a render at one rate looks like after an encoder resamples it
+onto another by blending rather than dropping — and it is exactly what the eye
+reads as stutter, because the eye is measuring the beat, not the frame count.
+
+**The test is a one-way ANOVA on the step sizes, grouped by index modulo 2, 3
+and 4.** Real motion has no opinion about whether a frame's index is even or odd.
+A resampled clip has a very strong one.
+
+    amp   (largest phase mean - smallest) / the overall mean
+    F     variance BETWEEN the phases / variance WITHIN them
+
+`F` is the right statistic here for two reasons. It asks the honest question — is
+the difference between the phases bigger than the noise inside them — and it
+penalises the extra groups of a larger modulus by itself, so a 2-frame beat is
+never mistaken for a 4-frame one. Measured on test clips built with a known
+wobble:
+
+| clip | amp | F | verdict |
+|---|---|---|---|
+| clean, even motion | 0.0007 | 0.15 | `CLEAN` |
+| a real 3.5% wobble | 0.018 | 576 | `CLEAN` — real, but below the floor |
+| a 14% wobble | 0.244 | 10450 | `GRID` |
+| the same clip, repaired | 0.054 | 820 | `CLEAN` |
+
+The floor is **8%**. Below that the fault is real but repainting a frame to
+correct it costs more than it buys: an invented frame is always a shade softer
+than the one it replaces, and on a 2-frame beat that softness lands on a beat too.
+There is no point trading a motion wobble for a texture wobble.
+
+The repair is a redistribution, not a rebuild. Each phase gets one advance
+figure, the figures are scaled so they average exactly 1.0, and the frames are
+moved back onto an even grid between their real neighbours. Scaling so the
+*phases* average 1.0 — rather than scaling the whole series — is what stops a
+fifteen-hundredth of a frame per cycle from accumulating into an eighth of a
+frame over the length of a clip. That drift is not academic: it was measured,
+and it left the repair correcting the wrong frames by the end of the clip and
+halving the fault instead of removing it.
+
+---
+
 ## Files
 
     cadence_core.py     the engine: probe, measure, segment, classify, plan
@@ -396,7 +457,7 @@ the fallback.
     timing_check.py     drift check against the source      (4-CHECK-TIMING)
     cadence_selftest.py known damage, known answers         (5-SELF-TEST)
     cadence-log.tsv     one line per clip the tools have seen
-    _retired/           the four old single-purpose tools, kept for reference
+    tests/              the synthetic-clip generator used to verify 3.1
 
 Set `CADENCE_TMP` to choose the scratch folder; frame extraction needs roughly
 3 MB per 1080p frame and 12 MB per 4K frame. Set `CADENCE_DEBUG=1` to see the

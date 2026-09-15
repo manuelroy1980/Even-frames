@@ -1,0 +1,338 @@
+========================================================
+  EVEN FRAMES  -  START HERE  (macOS)
+========================================================
+
+Repairs the once-a-second stutter in AI-generated video.
+Free. You do not need to know how to code.
+
+If you are on Windows, read READ-ME-FIRST-WINDOWS.txt
+instead. Everything the tool does is identical on both;
+only the icons differ.
+
+
+THE ICONS
+
+  0-SETUP-CHECK.command      is Python and ffmpeg installed
+  1-FIX-VIDEO.command        fix a clip  <-- this is the one
+  2-DIAGNOSE-ONLY.command    just tell me what is wrong
+  4-CHECK-TIMING.command     does the repair still fit the audio
+  5-SELF-TEST.command        checks the tools themselves still work
+
+There is one repair icon and it works out which repair your
+clip needs by itself - and it says which, and why, before it
+does anything.
+
+Icon 5 is not for your videos. It checks the TOOLS. Run it
+after anything in here changes: it takes one of your clean
+clips, breaks a copy six ways it knows the answer to, and
+confirms the repairs still work. All PASS means nothing that
+used to work got broken.
+
+
+========================================================
+  WHAT THIS IS
+========================================================
+
+Your AI videos hiccup about once a second. There are four
+different faults that all look like that same hiccup:
+
+  HELD FRAMES     every 3rd or 4th picture is a copy of the
+                  one before it. The real one was thrown
+                  away to make room for the copy.
+
+  MISSING FRAMES  a few pictures are simply gone. Nothing is
+                  repeated - there is just a lurch where a
+                  moment used to be.
+
+  DROPPED         the clip was made at 25 or 30 pictures a
+  THROUGHOUT      second and squeezed into 24 by throwing
+                  frames away all the way along.
+
+  UNEVEN BEAT     nothing repeated and nothing missing, but
+                  the pictures do not sit an equal distance
+                  apart. Long gap, short gap, long gap. This
+                  is the sneaky one - it looks perfect on
+                  paper and stutters on screen.
+
+They need four different repairs, and doing the wrong one
+makes the clip worse. Drag your file onto 1-FIX-VIDEO and it
+sorts that out for you.
+
+
+WHAT YOU GET BACK
+
+A file called <yourname>_even.mp4 next to the original, and
+a small text file saying what was done to it. Your original
+is never touched, never moved and never overwritten.
+
+Same frame count. Same length. Still 24 fps. It drops
+straight back on your timeline where the old one was and the
+audio still fits.
+
+If you ever see a file come back named _even_REJECTED, the
+tool is telling you it checked its own work and the result
+was not good enough to use. Keep your original. The rejected
+file is left there only so you can see what went wrong.
+
+
+--------------------------------------------------------
+PART 1 - ONE-TIME SETUP (about 5 minutes, only ever once)
+--------------------------------------------------------
+
+Your Mac needs two free programs. They are not apps with
+windows - they are helpers that run behind the scenes.
+
+  Python   - runs the little repair programs
+  ffmpeg   - reads and writes video files
+
+
+STEP 1.  Open Terminal.
+
+  Press Command + Space.
+  Type:  terminal
+  Press Return.
+
+  A window opens with text in it. Don't be scared of it.
+  You type a line, press Return, it does the thing.
+
+
+STEP 2.  Install Homebrew, if you do not have it.
+
+  Homebrew is the thing that installs the other two. Type
+  this (it is one long line - copy the whole thing):
+
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+  It will ask for your Mac password. Typing a password in
+  Terminal shows nothing at all - no dots, no stars. That is
+  normal. Type it and press Return.
+
+  It takes a few minutes. At the end it may print two more
+  lines for you to run - if it does, run them.
+
+  Already have Homebrew? Skip this step. You will know,
+  because  brew --version  prints something.
+
+
+STEP 3.  Install ffmpeg and Python.
+
+  In the same window, type:
+
+      brew install ffmpeg python
+
+  This is the big one - several minutes, a lot of text.
+
+
+STEP 4.  Check it worked.
+
+  Go to the folder you unzipped, in Finder.
+
+  RIGHT-CLICK  0-SETUP-CHECK.command  and choose Open.
+  (Right-click. Not double-click. See the next box.)
+
+  You want to see "Python OK" and "ffmpeg OK".
+
+
+STEP 5.  THE BOX THAT SAYS APPLE CANNOT CHECK IT
+
+  The first time you open any of these icons, macOS will
+  show a box saying the file "cannot be opened because it is
+  from an unidentified developer", or that Apple cannot
+  check it for malicious software.
+
+  That box appears for anything not bought from the App
+  Store or signed with a paid Apple developer account. It is
+  not about this tool specifically.
+
+  To get past it, ONCE PER ICON:
+
+      Right-click the icon (or Control-click)
+      Choose Open
+      In the box that appears, click Open again
+
+  After that, the icon double-clicks normally forever.
+
+  If right-click-Open does not offer you an Open button, go
+  to System Settings > Privacy & Security, scroll down, and
+  click "Open Anyway" next to the file it names.
+
+  Every file in this folder is plain text. You can open any
+  of them in TextEdit and read exactly what they do.
+
+
+STEP 6.  If an icon opens in TextEdit instead of running
+
+  That means macOS lost the "this is runnable" flag - it can
+  happen when a zip is unpacked by some tools. Fix it once,
+  in Terminal:
+
+      cd ~/Downloads/even-frames        <- your folder
+      chmod +x *.command
+
+  Then try the icon again.
+
+Setup is done forever. You never do Part 1 again.
+
+
+--------------------------------------------------------
+PART 2 - FIXING A VIDEO
+--------------------------------------------------------
+
+  Double-click  1-FIX-VIDEO.command
+  A window opens and asks for a file.
+  NOW drag your video from Finder into that window and let
+  go - a long file path appears as text.
+  Press Return.
+
+YOU CAN DO SEVERAL AT ONCE. Select them all in Finder (click
+the first, hold Shift, click the last) and drag the whole lot
+into the window. Each one is handled in turn and you get a
+running count.
+
+  HOW LONG?  About a minute or two per clip for 1080p. 4K
+  takes three or four times that. The window prints what it
+  is doing the whole time.
+
+  LEAVE THE WINDOW OPEN until it says ALL DONE.
+
+  DISK SPACE. It unpacks every frame to work on them, which
+  needs roughly 3 MB per 1080p frame - so about 700 MB for a
+  seven-second clip, freed again at the end. If your startup
+  disk is tight, point it somewhere else first:
+
+      export CADENCE_TMP=/Volumes/Scratch/cadence
+
+  ...in the same Terminal window, then start the tool from
+  that window with:  ./1-FIX-VIDEO.command
+
+
+--------------------------------------------------------
+PART 2b - A WHOLE TIMELINE AT ONCE
+--------------------------------------------------------
+
+If you edit in DaVinci Resolve STUDIO, the resolve/ folder
+has a script that does a whole video track in one go and
+stacks each repair on the track above its original, so you
+can toggle the top track to compare.
+
+  Resolve open, with the timeline you want showing
+  Preferences > System > General >
+      External scripting using = Local
+  Then run  resolve/EVEN-FRAMES-IN-RESOLVE.command
+
+It needs STUDIO - the free Resolve has no scripting. It is
+slow, minutes per clip. resolve/README.md has the rest.
+
+
+--------------------------------------------------------
+PART 3 - WHAT IT TELLS YOU
+--------------------------------------------------------
+
+Before it touches anything, it prints what it found and the
+evidence behind it:
+
+  DIAGNOSIS: PAD - padded repeats - every Nth frame is a
+                   copy of the one before it
+    frames 0-167: PAD - every 4th frame is a repeat, 42 of
+                  them, beat 100% solid
+      evidence: PAD 1.00, PULLDOWN 0.32, SEAM 0.00, GRID 0.00
+
+Then what it plans to do, then - after writing the file - it
+measures its own work and tells you whether it succeeded:
+
+  CHECK (measured on the file that was just written)
+    frames 168 -> 168, 7.000s -> 7.000s, 24 fps   OK
+    unevenness 1.00 -> 0.02   worst hitch 1.56x -> 1.03x
+    re-diagnosed as: CLEAN   (the defect is gone)
+    texture: repainted frames match the ones beside them
+    double image: none
+    overall 1.28 -> 0.04   evened out
+
+"evened out" or "improved" means use it. Anything in capital
+letters means keep your original - and in that case the file
+is named _even_REJECTED so you cannot mix them up later.
+
+
+--------------------------------------------------------
+PART 4 - WHEN IT REFUSES
+--------------------------------------------------------
+
+It refuses on purpose, in five situations:
+
+  ALREADY PROCESSED. The filename contains _even, _rebuilt,
+  _apo8, _ganim or similar. The repair works by reading the
+  ORIGINAL damage, and an earlier pass has erased it. Use
+  the raw download.
+
+  NOT 24 FPS. Every measurement in here assumes 24. Convert
+  first, or pass --fps if you know better.
+
+  VARIABLE FRAME RATE. The stutter is in the container, not
+  in the pictures, and no interpolator can fix it. Re-mux to
+  constant frame rate first:
+
+      ffmpeg -i IN.mp4 -c copy -video_track_timescale 24000 OUT.mp4
+
+  LOOKS PRE-REPAIRED. No repeats anywhere, but doubled steps
+  scattered through the clip - the fingerprint of something
+  that was repaired once and never retimed.
+
+  TWO EXPLANATIONS FIT EQUALLY. Rare now, but when neither
+  reading has evidence of its own, it stops and shows you
+  the scores rather than guessing. If you know which it is:
+
+      python3 cadence_fix.py "clip.mp4" --force-class PAD
+
+  (or SEAM, PULLDOWN, GRID)
+
+
+--------------------------------------------------------
+PART 5 - IF SOMETHING GOES WRONG
+--------------------------------------------------------
+
+  "command not found: python3"
+      Step 3 did not finish. Run  brew install python
+      again and watch for errors.
+
+  "ffmpeg: command not found"
+      Same, with  brew install ffmpeg
+
+  On an Apple Silicon Mac, Homebrew installs to
+  /opt/homebrew. If Terminal cannot find things Homebrew
+  installed, add this line to ~/.zprofile:
+
+      eval "$(/opt/homebrew/bin/brew shellenv)"
+
+  ...then open a new Terminal window.
+
+  THE REPAINTED FRAMES LOOK SOFT OR SMEARY
+      The motion in that clip is faster than optical flow
+      can follow. The tool says so when it happens. Nothing
+      free does better; a paid frame-interpolation pass on
+      the RAW download is the one thing that does.
+
+  IT SAID DOUBLE IMAGES
+      Believe it. Two pictures on top of each other is not
+      blur and no grade will hide it. Keep the original.
+
+  ANYTHING ELSE
+      Run 2-DIAGNOSE-ONLY on the clip and read what it says.
+      Then look at cadence-log.tsv next to these scripts -
+      one row per clip per run, with every number that
+      produced the answer. Open it in Numbers or Excel.
+
+
+--------------------------------------------------------
+THE ONE RULE
+--------------------------------------------------------
+
+  The output is always 24 fps, always the same number of
+  frames, and always the same length as the input.
+
+Never a 25 or 30 fps file to conform later. Never a few
+percent longer with a retime note. Never a silent drift
+against the sound.
+
+If a clip cannot be repaired under that rule, the tool says
+so and leaves it alone. That is not a failure. That is the
+tool refusing to hand you a file that looks fixed and is not.

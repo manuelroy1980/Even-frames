@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-cadence_selftest.py - prove the four repairs still work, on known damage.
+cadence_selftest.py - prove every repair still works, on known damage.
 
   python cadence_selftest.py CLEAN_CLIP.mp4 [--keep] [--size 480x270]
 
 Give it a clip the DIAGNOSE button calls CLEAN. It makes a small copy, breaks
-that copy in four ways it knows the answer to, and checks the tools get each one
+that copy in six ways it knows the answer to, and checks the tools get each one
 right and put it back.
 
     control    nothing done to it           expect CLEAN, and no file written
@@ -14,6 +14,9 @@ right and put it back.
     seam       five single frames removed   expect SEAM, and it should name them
     pulldown   one frame in five removed,   expect PULLDOWN, ~30 fps source
                all the way through
+    grid       nothing removed and nothing     expect GRID, a beat of 2
+               repeated - every frame simply
+               sits an eighth of a frame off
 
 For each repair it then checks the four things that actually matter:
 
@@ -57,8 +60,55 @@ def run(cmd, quiet=True):
                            stderr=subprocess.DEVNULL) if quiet else subprocess.call(cmd)
 
 
+def _pad_offset(f, n):
+    """A padded clip where the copy and the doubled step are not adjacent."""
+    seq = []
+    for i in range(n):
+        g, p = divmod(i, 4)
+        j = 4 * g + (0, 1, 1, 2)[p]
+        if j >= n:
+            break
+        seq.append(f[j])
+    return seq
+
+
+def _grid_frames(src, work, size, n):
+    """Frames for a GRID case: no repeats, no drops, just an uneven beat.
+
+    Every other case here is built by shuffling whole frames about, because
+    every other fault IS whole frames - a copy, a gap. A grid fault is not. The
+    frames are all present and all different, and each one simply sits a fraction
+    of a frame away from where it should. There is no way to build that out of
+    the pictures we were given, so the pictures have to be made: one interpolated
+    pass at eight times the rate, and then every eighth position picked with a
+    one-eighth wobble on it.
+
+    Both phases are picked OFF the original frame positions on purpose. Landing
+    one phase on real frames and the other on invented ones would build a clip
+    that alternates sharp, soft, sharp - and that is a texture beat, not a
+    cadence fault. The test would then be measuring the wrong thing and would
+    pass or fail for the wrong reason.
+    """
+    d = os.path.join(work, "grid8")
+    shutil.rmtree(d, ignore_errors=True); os.makedirs(d)
+    w, h = size.split("x")
+    if run(["ffmpeg", "-v", "error", "-y", "-i", src,
+            "-vf", f"scale={w}:{h},minterpolate=fps=192:mi_mode=mci:mc_mode=aobmc",
+            "-start_number", "0", "-compression_level", "1",
+            os.path.join(d, "%06d.png")]) != 0:
+        return None, d
+    eight = sorted(glob.glob(os.path.join(d, "*.png")))
+    seq = []
+    for i in range(n):
+        k = 8 * i + (2 if i % 2 == 0 else 3)      # steps of 9 and 7: +-12.5%
+        if k >= len(eight):
+            break
+        seq.append(eight[k])
+    return (seq if len(seq) >= 60 else None), d
+
+
 def build_cases(src, work, size):
-    """Extract once, then write four clips out of the same frames."""
+    """Extract once, then write six clips out of the same frames."""
     raw = os.path.join(work, "raw")
     os.makedirs(raw, exist_ok=True)
     w, h = size.split("x")
@@ -72,8 +122,15 @@ def build_cases(src, work, size):
         raise RuntimeError(f"that clip is only {n} frames; the test needs at least 60")
 
     plans = {
-        # every 4th frame becomes a copy of the one before it
+        # every 4th frame becomes a copy of the one before it, and the step
+        # straight out of the copy carries the moment it replaced
         "pad": [f[i - 1] if (i % 4 == 3 and i > 0) else f[i] for i in range(n)],
+        # the same damage at a different phase: an ordinary frame sits BETWEEN
+        # the copy and the doubled step. Source indices run 0,1,1,2 per group of
+        # four, so the steps go move, freeze, move, double. This is the case the
+        # repair used to get wrong - it split the healthy pair next to the copy
+        # and left the double alone, taking the freeze out and leaving the lurch.
+        "pad_offset": _pad_offset(f, n),
         # five single frames taken out
         "seam": [f[i] for i in range(n) if i not in SEAM_KILL],
         # one frame in five taken out, all the way through: a 30-into-24 squeeze
@@ -81,6 +138,9 @@ def build_cases(src, work, size):
         # and an untouched control, so a false alarm shows up too
         "control": list(f),
     }
+    grid_seq, grid_dir = _grid_frames(src, work, size, n)
+    if grid_seq:
+        plans["grid"] = grid_seq
     made = {}
     for name, seq in plans.items():
         d = os.path.join(work, "seq_" + name)
@@ -98,6 +158,7 @@ def build_cases(src, work, size):
         shutil.rmtree(d, ignore_errors=True)
         made[name] = (out, len(seq))
     shutil.rmtree(raw, ignore_errors=True)
+    shutil.rmtree(grid_dir, ignore_errors=True)
     return made, n
 
 
@@ -118,11 +179,12 @@ def check(name, clip, frames, work, results):
         line.update(ok=False, got="unreadable", notes=[str(e)])
         results.append(line); return
 
-    want = {"control": "CLEAN", "pad": "PAD", "seam": "SEAM", "pulldown": "PULLDOWN"}[name]
+    want = {"control": "CLEAN", "pad": "PAD", "pad_offset": "PAD",
+            "seam": "SEAM", "pulldown": "PULLDOWN", "grid": "GRID"}[name]
     line["got"] = v.klass if v.ok else f"REFUSED:{v.refuse_kind}"
     line["ok"] = (v.klass == want and v.ok)
 
-    if name == "pad" and v.ok:
+    if name.startswith("pad") and v.ok:
         big = max(v.regions, key=lambda r: r["span"])
         p = (big.get("pad") or {}).get("period")
         found = sum(len(r["pad"]["members"]) for r in v.regions if r["klass"] == "PAD")
@@ -145,6 +207,14 @@ def check(name, clip, frames, work, results):
         big = max(v.regions, key=lambda r: r["span"])
         line["notes"].append(f"{big.get('implied_rate')} fps source, "
                              f"cycle {big.get('cycle')} at {big.get('cycle_fit')}")
+    if name == "grid" and v.ok:
+        big = max(v.regions, key=lambda r: r["span"])
+        g = big.get("grid") or {}
+        line["notes"].append(f"beat of {g.get('m')}, phases {g.get('amp', 0):.0%} apart "
+                             f"(F={g.get('F')}), and no frame repeated")
+        if (g.get("m") or 0) != 2:
+            line["ok"] = False
+            line["notes"].append(f"expected a 2-frame beat, got {g.get('m')}")
 
     if name == "control":
         results.append(line); return
@@ -155,9 +225,9 @@ def check(name, clip, frames, work, results):
     rc = subprocess.call([sys.executable, os.path.join(HERE, "cadence_fix.py"),
                           clip, "--crf", "16"], env=env,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    stem, ext = os.path.splitext(clip)
-    out = f"{stem}_even{ext}"
-    if rc != 0 or not os.path.exists(out):
+    made = core.even_versions(clip)
+    out = made[-1] if made else None
+    if rc != 0 or not out:
         line["ok"] = False
         line["notes"].append("the repair produced no file")
         results.append(line); return
@@ -205,13 +275,16 @@ if not a.input:
 
 print()
 print("=" * 70)
-print("  SELF-TEST  -  breaking a clip four known ways and checking the repairs")
+print("  SELF-TEST  -  breaking a clip six known ways and checking the repairs")
 print("=" * 70)
 print()
 print(f"  source clip : {os.path.basename(a.input)}")
 
 try:
-    v0 = core.diagnose(a.input)
+    # force=True: this clip is only ever measured and copied from, never repaired,
+    # so a Topaz tag on it is not a reason to stop. The damage the test injects is
+    # its own, and the cases are re-encoded without any tags.
+    v0 = core.diagnose(a.input, force=True)
 except Unreadable as e:
     print(f"  cannot read that file: {e}")
     sys.exit(1)
@@ -238,9 +311,12 @@ shutil.rmtree(work, ignore_errors=True); os.makedirs(work)
 t0 = time.time()
 results = []
 try:
-    print("  building the four test clips...")
+    print("  building the test clips...")
     cases, n = build_cases(a.input, work, a.size)
-    for name in ("control", "pad", "seam", "pulldown"):
+    for name in ("control", "pad", "pad_offset", "seam", "pulldown", "grid"):
+        if name not in cases:
+            print(f"  skipping {name} - the case could not be built on this machine")
+            continue
         clip, frames = cases[name]
         print(f"  testing {name}...")
         check(name, clip, frames, work, results)
@@ -264,8 +340,17 @@ if passed == len(results):
     print("  Everything that used to work still works.")
 else:
     print()
-    print("  Something that used to work is broken. Please open a GitHub issue with this whole window;")
-    print("  the case name and what it read as is enough to find it.")
+    print("  Before assuming the tools are broken, look at which cases failed.")
+    print("  The test works by injecting damage into YOUR clip, and the damage has")
+    print("  to stand out against that clip's own motion to be findable. A clip with")
+    print("  restless or uneven motion can hide it, and then a case reads as CLEAN or")
+    print("  finds only some of the repeats even though nothing is wrong with the")
+    print("  tools. A steady camera move - a pan, a push in, a walk - makes the")
+    print("  clearest test bed. Try a second clip before concluding anything.")
+    print()
+    print("  If a steady clip fails too, that is a real regression: please open a")
+    print("  GitHub issue with this whole window. The case name and what it read as")
+    print("  is enough to find it.")
 print()
 if a.keep:
     print(f"  test clips left in: {work}")
