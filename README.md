@@ -1,6 +1,6 @@
 # Even Frames
 
-**Repairs the once-a-second stutter in AI-generated video.**
+**Repairs the stutter in AI-generated video.**
 Free, open source, Windows and macOS. You do not need to know how to code.
 
 Clips out of Seedance, Kling, Veo, Runway, Hailuo and the rest very often do not
