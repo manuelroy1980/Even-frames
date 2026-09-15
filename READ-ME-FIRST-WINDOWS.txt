@@ -2,7 +2,7 @@
   EVEN FRAMES  -  START HERE  (Windows)
 ========================================================
 
-Repairs the once-a-second stutter in AI-generated video.
+Repairs the stutter in AI-generated video.
 Free. You do not need to know how to code.
 
 If you are on a Mac, read READ-ME-FIRST-MAC.txt instead.
