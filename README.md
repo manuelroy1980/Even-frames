@@ -176,5 +176,5 @@ MIT. Do what you like with it.
 ## Credits
 
 Built for the *Moon Phase Chronicles* AI-film project, where the stutter was
-costing more time than the shots were. Released free in the hope it saves
-someone else the same afternoon.
+costing more time than the shots were. Released free with the hope to raise the
+floor of AI films quality.
